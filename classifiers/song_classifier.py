@@ -4,9 +4,10 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from collections import Counter
 from colorama import Back, Style
-from BengioNN import BengioNN, collate_fn_PAD
-from ElmanRNN import ElmanRNN, collate_fn_RNN
-from auxfunctions import Vocabulary, SentenceDataset, read_and_tokenize_with_labels
+from BengioNN import BengioNN
+from ElmanRNN import ElmanRNN
+from Transformer import DecoderForClassification
+from auxfunctions import Vocabulary, read_and_tokenize_with_labels
 import csv
 
 def calculate_accuracy(predictions, labels):
@@ -40,36 +41,33 @@ def predict_with_model(model, processed_corpus, vocab, device):
         
         # Obtener la predicción (logits)
         with torch.no_grad():
-            output = model(sentence_tensor)
+          output = model(sentence_tensor)
 
-        #  # --- handle tuple output (RNN case) ---
-        # if isinstance(output, tuple):
-        #     output = output[0]
+        # --- handle tuple output (RNN or Transformer case) ---
+        if isinstance(output, tuple):
+            output = output[0]
 
-        # # Take last time step output if shape is (batch, seq_len, hidden)
-        # if output.dim() == 3:
-        #     output = output[:, -1, :]
+        # Take last time step if needed
+        if output.dim() == 3:
+            output = output[:, -1, :]
+
+        # For binary classification with num_classes=2
+        if output.shape[-1] == 2:
+            prob = torch.softmax(output, dim=-1)  # Apply softmax to get class probabilities
+            prediction = torch.argmax(prob, dim=-1).item()  # Pick the class with highest probability
+        else:
+            prob = torch.sigmoid(output)
+            prediction = 1 if prob.item() > 0.5 else 0
         
-        # # If output is still > 1 value (e.g. vocab_size logits), reduce to scalar logit
-        # if output.size(-1) > 1:
-        #     # Apply linear classifier if it's not part of model
-        #     output = output.mean(dim=-1, keepdim=True)  # crude fallback
-        #     # Ideally you have a final layer that returns [batch_size, 1]
-
-        # Apply sigmoid to get probability
-        prob = torch.sigmoid(output)
-    
-        # Asumir que cualquier probabilidad > 0.5 es 'rap' (1), sino 'rock' (0)
-        prediction = 1 if prob.item() > 0.5 else 0
         predictions.append(prediction)
     
     return predictions
 
-def generate_csv(pad_predictions, elman_predictions, output_filename="aluNUM.csv"):
+def generate_csv(pad_predictions, elman_predictions, transformer_predictions, output_filename="aluNUM.csv"):
     # Definir las categorías de clasificación según los modelos
     pad = ["K" if pred == 1 else "P" for pred in pad_predictions]  # Rap (K), Rock (P)
     recurrente = ["K" if pred == 1 else "P" for pred in elman_predictions]  # Rap (K), Rock (P)
-    transformer = ["Z"] * len(pad)  # Implementacion pendiente
+    transformer = ["K" if pred == 1 else "P" for pred in transformer_predictions]  # Rap (K), Rock (P)
     ngramas = ["Z"] * len(pad)  # Implementacion pendiente
 
     # Guardar los resultados en un archivo CSV
@@ -107,12 +105,8 @@ if __name__ == "__main__":
     train_labels = labels[split_idx:]
     test_labels = labels[:split_idx]
 
-    # Crear datasets y dataloaders
     context_size = 128
-    train_dataset = SentenceDataset(train_sentences, train_labels, vocab, context_size)
-    test_dataset = SentenceDataset(test_sentences, test_labels, vocab, context_size)
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, collate_fn=collate_fn_PAD)
-    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=collate_fn_PAD)
+
     # --- Inicialización del Modelo (BengioNN) ---
     print(Back.YELLOW + "Inicializando modelo BengioNN...")
     print(Style.RESET_ALL)
@@ -147,11 +141,33 @@ if __name__ == "__main__":
     # --- Predicción ---
     elman_predictions = predict_with_model(model, test_sentences, vocab, device)
 
+    # --- Inicialización del Modelo (Transformer) ---
+    print(Back.YELLOW + "Inicializando modelo Transformer...")
+    print(Style.RESET_ALL)
+    model = DecoderForClassification(
+        vocab_size=vocab.size,
+        emb_dim=128,
+        num_heads=8,
+        num_blocks=6,
+        context_size=context_size,
+        num_classes=2,
+        pad_idx=vocab.token_to_idx['<PAD>'],
+        dropout=0.1
+    ).to(device)
+    # Cargar pesos guardados
+    load_path = "models/Transformer.pth"
+    model.load_state_dict(torch.load(load_path, map_location=device))
+    print(f"Modelo cargado desde {load_path}")
+    print(f"Parámetros del modelo: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+    # --- Predicción ---
+    transformer_predictions = predict_with_model(model, test_sentences, vocab, device)
+
     # --- Evaluación Final ---
     # Generar el CSV con las predicciones del conjunto de test
     print("\nGenerando predicciones para el conjunto de test...")
     #print(test_sentences[0])
     print(f"Precisión de PAD: {calculate_accuracy(pad_predictions, test_labels):.2f}%")
     print(f"Precisión de ElmanRNN: {calculate_accuracy(elman_predictions, test_labels):.2f}%")
-    generate_csv(pad_predictions, elman_predictions, output_filename="alu0101391663.csv")
+    print(f"Precisión de Transformer: {calculate_accuracy(transformer_predictions, test_labels):.2f}%")
+    generate_csv(pad_predictions, elman_predictions, transformer_predictions, output_filename="alu0101391663.csv")
  

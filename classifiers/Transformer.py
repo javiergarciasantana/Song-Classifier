@@ -5,6 +5,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 import math
 from collections import Counter
+from auxfunctions import read_and_tokenize_with_labels
 
 # ----------------------------- Gestión del Vocabulario -----------------------------
 class Vocabulary:
@@ -184,30 +185,6 @@ class DecoderForClassification(nn.Module):
         logits = self.classifier_head(last_token_hidden_states)
         return logits
 
-# ----------------------------- Funciones de Lectura y Preprocesamiento -----------------------------
-def read_and_tokenize(filename):
-    """
-    Lee un archivo y tokeniza las oraciones, sustituyendo saltos de línea por 'EOL'.
-    Args:
-        filename (str): Ruta al archivo de entrada.
-    Returns:
-        list: Una lista de oraciones, donde cada oración es una lista de tokens.
-    """
-    sentences = []
-    with open(filename, 'r', encoding='utf-8-sig') as f:
-        content = f.read()
-        raw_sentences = content.split('\n\n')
-        for raw_sentence in raw_sentences:
-            processed_sentence = raw_sentence.replace('\n', ' EOL ').strip()
-            tokens = processed_sentence.split()
-            if tokens and tokens[0] == "EOL":
-                tokens.pop(0)
-            if tokens and tokens[-1] == "EOL":
-                tokens.pop()
-            if tokens:
-                sentences.append(tokens)
-    return sentences
-
 # ----------------------------- Conjunto de Datos Personalizado -----------------------------
 class SentenceDataset(Dataset):
     def __init__(self, sentences, labels, vocab, context_size):
@@ -312,50 +289,42 @@ def evaluate_model(model, data_loader, criterion, device='cpu'):
 # ----------------------------- Script Principal (Transformers) -----------------------------
 if __name__ == "__main__":
     # --- Configuración ---
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+
     print(f"Usando dispositivo: {device}")
     # Paso 1: Leer y tokenizar oraciones de dos archivos
-    file1 = r"./all_lyrics1.txt"
-    file2 = r"./all_lyrics2.txt"
-    sentences_class0 = read_and_tokenize(file1)
-    sentences_class1 = read_and_tokenize(file2)
+    file1 = r"../corpus/cleaned_train.txt"
+
+    sentences, labels = read_and_tokenize_with_labels(file1)
+  
     # Reducir el tamaño del dataset para pruebas rápidas
     #sentences_class0 = sentences_class0[:30]
     #sentences_class1 = sentences_class1[:30]
 
     # Paso 2: Construir vocabulario solo desde el conjunto de entrenamiento
-    vocab = Vocabulary(min_freq=5)
-    train_sentences_class0 = sentences_class0[:int(len(sentences_class0) * 0.8)]
-    train_sentences_class1 = sentences_class1[:int(len(sentences_class1) * 0.8)]
-    train_sentences = train_sentences_class0 + train_sentences_class1
-    vocab.build_vocab(train_sentences)
+    vocab = Vocabulary(min_freq=5)  # Usar min_freq para entrenar con <UNK>
+    train_sentences = sentences[int(len(sentences) * 0.8):]  # Usar el 80% de las oraciones para el vocabulario
+    vocab.build_vocab(train_sentences)  # Construir vocabulario con min_freq
 
-    # Paso 3: Asignar etiquetas (0 para clase 0, 1 para clase 1)
-    labels_class0 = [0] * len(sentences_class0)
-    labels_class1 = [1] * len(sentences_class1)
-
-    # Combinar todas las oraciones y etiquetas
-    sentences = sentences_class0 + sentences_class1
-    labels = labels_class0 + labels_class1
     # Mezclar el conjunto combinado
+    # import random
+    # combined = list(zip(sentences, labels))
+    # random.shuffle(combined)
+    # sentences, labels = zip(*combined)
 
-    import random
-    combined = list(zip(sentences, labels))
-    random.shuffle(combined)
-    sentences, labels = zip(*combined)
     # Dividir en conjuntos de entrenamiento y prueba
     train_ratio = 0.8
     split_idx = int(len(sentences) * train_ratio)
-    train_sentences = sentences[:split_idx]
-    test_sentences = sentences[split_idx:]
-    train_labels = labels[:split_idx]
-    test_labels = labels[split_idx:]
+    train_sentences = sentences[split_idx:]
+    test_sentences = sentences[:split_idx]
+    train_labels = labels[split_idx:]
+    test_labels = labels[:split_idx]
     # Crear datasets y dataloaders
-    context_size = 256
+    context_size = 128
     train_dataset = SentenceDataset(train_sentences, train_labels, vocab, context_size)
     test_dataset = SentenceDataset(test_sentences, test_labels, vocab, context_size)
-    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True, collate_fn=collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False, collate_fn=collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=collate_fn)
 
     # --- Inicialización del Modelo (Transformer) ---
     print("Inicializando modelo Transformer...")
@@ -380,9 +349,16 @@ if __name__ == "__main__":
         learning_rate=0.001,
         device=device,
     )
+
     # --- Evaluación Final ---
     print("\n--- Evaluación Final ---")
     final_train_loss, final_train_acc = evaluate_model(model, train_loader, nn.CrossEntropyLoss(), device)
     final_val_loss, final_val_acc = evaluate_model(model, test_loader, nn.CrossEntropyLoss(), device)
     print(f"Entrenamiento Final: Pérdida={final_train_loss:.4f}, Precisión={final_train_acc:.2f}%")
     print(f"Validación Final: Pérdida={final_val_loss:.4f}, Precisión={final_val_acc:.2f}%")
+
+     # --- Guardar el modelo ---
+    save_path = "models/Transformer.pth"  # Puedes elegir otro directorio/nombre
+    torch.save(model.state_dict(), save_path)
+    print(f"Modelo guardado en {save_path}")
+   
