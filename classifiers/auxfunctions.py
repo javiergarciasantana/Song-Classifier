@@ -4,6 +4,12 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from collections import Counter
 
+def collate_fn(batch):
+    inputs, labels = zip(*batch)
+    inputs = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=0)
+    labels = torch.tensor(labels)
+    return inputs, labels
+
 # ----------------------------- Gestión del Vocabulario -----------------------------
 class Vocabulary:
     def __init__(self, min_freq=3):  # Parámetro para frecuencia mínima

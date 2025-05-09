@@ -1,4 +1,5 @@
 import torch
+import pickle
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
@@ -9,6 +10,23 @@ from ElmanRNN import ElmanRNN
 from Transformer import DecoderForClassification
 from auxfunctions import Vocabulary, read_and_tokenize_with_labels
 import csv
+
+def predict_ngram(test_sentences, model_rap, model_rock, n=2):
+    predictions = []
+    for sentence in test_sentences:
+        padded = ['<s>'] * (n - 1) + sentence + ['</s>']
+        rap_score, rock_score = 0.0, 0.0
+
+        for i in range(len(padded) - n + 1):
+            context = tuple(padded[i:i+n-1])
+            target = padded[i+n-1]
+            rap_score += model_rap[context][target]
+            rock_score += model_rock[context][target]
+
+        predictions.append(1 if rap_score > rock_score else 0)
+
+    return predictions
+
 
 def calculate_accuracy(predictions, labels):
     """
@@ -63,12 +81,12 @@ def predict_with_model(model, processed_corpus, vocab, device):
     
     return predictions
 
-def generate_csv(pad_predictions, elman_predictions, transformer_predictions, output_filename="aluNUM.csv"):
+def generate_csv(ngram_predictions, pad_predictions, elman_predictions, transformer_predictions, output_filename="aluNUM.csv"):
     # Definir las categorías de clasificación según los modelos
     pad = ["K" if pred == 1 else "P" for pred in pad_predictions]  # Rap (K), Rock (P)
     recurrente = ["K" if pred == 1 else "P" for pred in elman_predictions]  # Rap (K), Rock (P)
     transformer = ["K" if pred == 1 else "P" for pred in transformer_predictions]  # Rap (K), Rock (P)
-    ngramas = ["Z"] * len(pad)  # Implementacion pendiente
+    ngramas = ["K" if pred == 1 else "P" for pred in ngram_predictions]  # Rap (K), Rock (P)
 
     # Guardar los resultados en un archivo CSV
     with open(output_filename, mode='w', newline='', encoding='utf-8') as file:
@@ -105,7 +123,8 @@ if __name__ == "__main__":
     train_labels = labels[split_idx:]
     test_labels = labels[:split_idx]
 
-    context_size = 128
+    context_size = 256
+
 
     # --- Inicialización del Modelo (BengioNN) ---
     print(Back.YELLOW + "Inicializando modelo BengioNN...")
@@ -114,7 +133,7 @@ if __name__ == "__main__":
         vocab_size=vocab.size,
         context_size=context_size,
         embed_size=128,
-        hidden_dim=64
+        hidden_dim=128
     ).to(device)
     # Cargar pesos guardados
     load_path = "models/bengioNN.pth"
@@ -128,6 +147,7 @@ if __name__ == "__main__":
     # --- Inicialización del Modelo (ElmanRNN) ---
     print(Back.YELLOW + "Inicializando modelo ElmanRNN...")
     print(Style.RESET_ALL)
+
     model = ElmanRNN(
         vocab_size=vocab.size,
         embed_size=128,
@@ -140,7 +160,7 @@ if __name__ == "__main__":
     print(f"Parámetros del modelo: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     # --- Predicción ---
     elman_predictions = predict_with_model(model, test_sentences, vocab, device)
-
+    context_size = 128
     # --- Inicialización del Modelo (Transformer) ---
     print(Back.YELLOW + "Inicializando modelo Transformer...")
     print(Style.RESET_ALL)
@@ -162,12 +182,22 @@ if __name__ == "__main__":
     # --- Predicción ---
     transformer_predictions = predict_with_model(model, test_sentences, vocab, device)
 
+    # --- Inicialización del Modelo N-grama---
+    print(Back.YELLOW + "Inicializando modelo N-grama...")
+    print(Style.RESET_ALL)
+    with open("models/ngram_model.pkl", "rb") as f:
+      cpd_rap, cpd_rock, _ = pickle.load(f)
+    
+    ngram_predictions = predict_ngram(test_sentences, cpd_rap, cpd_rock, n=2)
+
+
     # --- Evaluación Final ---
     # Generar el CSV con las predicciones del conjunto de test
     print("\nGenerando predicciones para el conjunto de test...")
-    #print(test_sentences[0])
+
     print(f"Precisión de PAD: {calculate_accuracy(pad_predictions, test_labels):.2f}%")
     print(f"Precisión de ElmanRNN: {calculate_accuracy(elman_predictions, test_labels):.2f}%")
     print(f"Precisión de Transformer: {calculate_accuracy(transformer_predictions, test_labels):.2f}%")
-    generate_csv(pad_predictions, elman_predictions, transformer_predictions, output_filename="alu0101391663.csv")
+    print(f"Precisión del modelo N-gramas: {calculate_accuracy(ngram_predictions, test_labels):.2f}%")
+    generate_csv(ngram_predictions, pad_predictions, elman_predictions, transformer_predictions, output_filename="alu0101391663.csv")
  

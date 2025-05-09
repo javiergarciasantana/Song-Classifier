@@ -3,17 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from collections import Counter
-from auxfunctions import Vocabulary, SentenceDataset, read_and_tokenize_with_labels
-
-def collate_fn_PAD(batch):
-    """
-    Función de collate para manejar batches de datos.
-    Asegura que las secuencias tengan la misma longitud mediante padding.
-    """
-    inputs, labels = zip(*batch)
-    inputs = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=vocab.token_to_idx['<PAD>'])
-    labels = torch.tensor(labels)
-    return inputs, labels
+from auxfunctions import Vocabulary, SentenceDataset, collate_fn, read_and_tokenize_with_labels
 
 # ----------------------------- Modelo BengioNN -----------------------------
 class BengioNN(nn.Module):
@@ -125,18 +115,18 @@ if __name__ == "__main__":
     train_labels = labels[split_idx:]
     test_labels = labels[:split_idx]
     # Crear datasets y dataloaders
-    context_size = 128
+    context_size = 256
     train_dataset = SentenceDataset(train_sentences, train_labels, vocab, context_size)
     test_dataset = SentenceDataset(test_sentences, test_labels, vocab, context_size)
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, collate_fn=collate_fn_PAD)
-    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=collate_fn_PAD)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=collate_fn)
     # --- Inicialización del Modelo (BengioNN) ---
     print("Inicializando modelo BengioNN...")
     model = BengioNN(
         vocab_size=vocab.size,
         context_size=context_size,
         embed_size=128,
-        hidden_dim=64
+        hidden_dim=128
     ).to(device)
     print(f"Parámetros del modelo: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     # --- Entrenamiento y Evaluación ---
@@ -145,7 +135,7 @@ if __name__ == "__main__":
         train_loader,
         test_loader,  # Pasa el cargador de validación
         vocab,
-        num_epochs=30,
+        num_epochs=20,
         learning_rate=0.01,
         device=device,
     )

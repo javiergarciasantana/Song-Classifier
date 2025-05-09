@@ -7,7 +7,7 @@ import math
 from collections import Counter
 from sklearn.utils import shuffle
 
-from auxfunctions import Vocabulary, SentenceDataset, read_and_tokenize_with_labels
+from auxfunctions import Vocabulary, SentenceDataset, collate_fn, read_and_tokenize_with_labels
 
 
 # ----------------------------- Modelo ElmanRNN -----------------------------
@@ -23,14 +23,6 @@ class ElmanRNN(nn.Module):
         output, hidden = self.rnn(embedded)  # Shape: [batch_size, sequence_length, hidden_dim]
         logits = self.fc(hidden[-1])  # Use the final hidden state
         return logits
-
-# ----------------------------- Funciones de Lectura y Preprocesamiento -----------------------------
-
-def collate_fn_RNN(batch):
-    inputs, labels = zip(*batch)
-    inputs = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=0)
-    labels = torch.tensor(labels)
-    return inputs, labels
 
 # ----------------------------- Función de Entrenamiento (ElmanRNN) -----------------------------
 def train_classification_model(model, data_loader, num_epochs, learning_rate, device="cpu"):
@@ -107,11 +99,11 @@ if __name__ == "__main__":
     train_labels = labels[split_idx:]
     test_labels = labels[:split_idx]
     # Crear datasets y dataloaders
-    context_size = 128
+    context_size = 256
     train_dataset = SentenceDataset(train_sentences, train_labels, vocab, context_size)
     test_dataset = SentenceDataset(test_sentences, test_labels, vocab, context_size)
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, collate_fn=collate_fn_RNN)
-    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=collate_fn_RNN)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=collate_fn)
     # --- Inicialización del Modelo (ElmanRNN) ---
     print("Inicializando modelo ElmanRNN...")
     model = ElmanRNN(
